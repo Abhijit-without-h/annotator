@@ -1,0 +1,13 @@
+# Issues
+- debug view must be a expandable
+- UI is too centered, must use entire space available when in desktop for better representing this visually dense UI , take into consideration responsive design as well
+- Seek header ( red line ) jumping to the annotation block thats clicked , very annoying when you are resizing or trying to find the correct segment of a clip and rearrange things
+- Drag and Drop Rearrangmenet of Track Order not working ( selects other texts as well , maybe use a up and down button for rearrangement ) , currently need to drag it out to the seek area to move around
+- JSON track name and Timeline UI track name not matching
+- JSON track order should match the Timeline match order
+- Cant rename Track name - stops at first character entry
+- 
+- Audio Playback and Synchronization with timeline functionality ( includes sample dataset and folder structure )
+- Including Audio source information in JSON
+- Adding import from JSON functionality 
+- Adding markers or flags support in timeline editor
