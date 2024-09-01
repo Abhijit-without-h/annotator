@@ -1,4 +1,5 @@
 # Issues
+- the default track will be named ambient and thats it , on creating new track user can give it a name as well
 - debug view must be a expandable
 - UI is too centered, must use entire space available when in desktop for better representing this visually dense UI , take into consideration responsive design as well
 - Seek header ( red line ) jumping to the annotation block thats clicked , very annoying when you are resizing or trying to find the correct segment of a clip and rearrange things
