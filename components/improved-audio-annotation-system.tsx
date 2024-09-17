@@ -104,11 +104,26 @@ export function ImprovedAudioAnnotationSystem() {
         start: timelinePosition,
         end: timelinePosition + 5
       }
-      setTrackData(prev => ({
-        ...prev,
-        [selectedTrack]: [...(prev[selectedTrack] || []), newAnnotation]
-      }))
-      resetAnnotationFields()
+
+      setTrackData(prev => {
+        const newData = { ...prev };
+        if (selectedAnnotation) {
+          // Update existing annotation
+          newData[selectedAnnotation.track][selectedAnnotation.index] = {
+            ...newData[selectedAnnotation.track][selectedAnnotation.index],
+            ...newAnnotation
+          };
+        } else {
+          // Add new annotation
+          if (!newData[selectedTrack]) {
+            newData[selectedTrack] = [];
+          }
+          newData[selectedTrack].push(newAnnotation);
+        }
+        return newData;
+      });
+
+      resetAnnotationFields();
     }
   }
 
