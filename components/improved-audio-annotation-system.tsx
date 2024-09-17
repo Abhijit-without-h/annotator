@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Slider } from "@/components/ui/slider"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ZoomInIcon, ZoomOutIcon, PlusIcon, Trash2Icon, GripVerticalIcon } from 'lucide-react'
+import { ZoomInIcon, ZoomOutIcon, PlusIcon, Trash2Icon, ArrowUpIcon, ArrowDownIcon, PlayIcon, PauseIcon } from 'lucide-react'
 
 interface Annotation {
   transcription: string
@@ -32,6 +32,14 @@ const available_tone_options = [
   "Interest", "Neutral", "Triumph"
 ]
 
+const GRID_INTERVAL = 1 // Grid interval in seconds
+const TRACK_HEIGHT_GRID = 16 // Grid size for track height (in pixels)
+const MIN_TRACK_HEIGHT = 32 // Minimum track height (in pixels)
+
+const snapToGrid = (position: number, interval: number) => {
+  return Math.round(position / interval) * interval
+}
+
 export function ImprovedAudioAnnotationSystem() {
   const [timelinePosition, setTimelinePosition] = useState(0)
   const [transcription, setTranscription] = useState('')
@@ -52,13 +60,16 @@ export function ImprovedAudioAnnotationSystem() {
   const [selectedAnnotation, setSelectedAnnotation] = useState<{track: string, index: number} | null>(null)
   const [resizingTrack, setResizingTrack] = useState<string | null>(null)
   const [editingTrackId, setEditingTrackId] = useState<string | null>(null)
-  const [draggingTrack, setDraggingTrack] = useState<string | null>(null)
-  const [draggedTrackPos, setDraggedTrackPos] = useState<{ x: number, y: number } | null>(null)
   const timelineRef = useRef<HTMLDivElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [containerWidth, setContainerWidth] = useState(0)
   const [timelineWidth, setTimelineWidth] = useState(0)
   const [totalDuration, setTotalDuration] = useState(300) // Total duration in seconds
+  const [newTrackName, setNewTrackName] = useState<string>('')
+
+  const [audioSrc, setAudioSrc] = useState<string | null>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const audioRef = useRef<HTMLAudioElement>(null)
 
   useEffect(() => {
     const updateWidth = () => {
@@ -125,59 +136,53 @@ export function ImprovedAudioAnnotationSystem() {
 
     const timelineRect = timelineRef.current.getBoundingClientRect()
     const relativeX = e.clientX - timelineRect.left
-    const newPosition = (relativeX / timelineWidth) * totalDuration
+    let newPosition = (relativeX / timelineWidth) * totalDuration
+
+    // Constrain newPosition within [0, totalDuration]
+    newPosition = Math.max(0, Math.min(newPosition, totalDuration))
+
+    // Snap to grid
+    newPosition = snapToGrid(newPosition, GRID_INTERVAL)
 
     if (draggingAnnotation) {
       setTrackData(prev => {
-        const newData = {...prev}
-        const annotation = newData[draggingAnnotation.track][draggingAnnotation.index]
+        const newData = { ...prev }
+        const annotation = { ...newData[draggingAnnotation.track][draggingAnnotation.index] }
         const duration = annotation.end - annotation.start
-        const newTrack = tracks[Math.floor((e.clientY - timelineRect.top) / tracks.reduce((acc, t) => acc + t.height, 0) * tracks.length)].id
-        
-        annotation.start = Math.max(0, Math.min(newPosition, totalDuration - duration))
+        const newStart = Math.max(0, Math.min(newPosition, totalDuration - duration))
+        annotation.start = newStart
         annotation.end = annotation.start + duration
-        
-        if (newTrack !== draggingAnnotation.track) {
-          newData[newTrack] = [...(newData[newTrack] || []), annotation]
-          newData[draggingAnnotation.track] = newData[draggingAnnotation.track].filter((_, i) => i !== draggingAnnotation.index)
-          setDraggingAnnotation({track: newTrack, index: newData[newTrack].length - 1})
-        }
-        
+
+        // Ensure annotation stays within the track boundaries
+        annotation.start = Math.max(0, annotation.start)
+        annotation.end = Math.min(totalDuration, annotation.end)
+
+        newData[draggingAnnotation.track][draggingAnnotation.index] = annotation
+
         return newData
       })
     } else if (resizingAnnotation) {
       setTrackData(prev => {
-        const newData = {...prev}
-        const annotation = newData[resizingAnnotation.track][resizingAnnotation.index]
-        annotation.end = Math.max(annotation.start + 1, Math.min(newPosition, totalDuration))
+        const newData = { ...prev }
+        const annotation = { ...newData[resizingAnnotation.track][resizingAnnotation.index] }
+        annotation.end = Math.max(annotation.start + GRID_INTERVAL, Math.min(newPosition, totalDuration))
+
+        // Ensure annotation stays within the track boundaries
+        annotation.end = Math.min(totalDuration, annotation.end)
+
+        newData[resizingAnnotation.track][resizingAnnotation.index] = annotation
         return newData
       })
     } else if (resizingTrack) {
       const trackIndex = tracks.findIndex(t => t.id === resizingTrack)
       const totalHeight = tracks.reduce((acc, t) => acc + t.height, 0)
-      const newHeight = Math.max(20, e.clientY - timelineRect.top - tracks.slice(0, trackIndex).reduce((acc, t) => acc + t.height, 0))
+      const mouseY = e.clientY - timelineRect.top
+      const trackTop = tracks.slice(0, trackIndex).reduce((acc, t) => acc + t.height, 0)
+      const newHeight = Math.max(MIN_TRACK_HEIGHT, snapToGrid(mouseY - trackTop, TRACK_HEIGHT_GRID))
+      
       setTracks(prev => prev.map((track, index) => 
         index === trackIndex ? { ...track, height: newHeight } : track
       ))
-    } else if (draggingTrack) {
-      const trackIndex = tracks.findIndex(t => t.id === draggingTrack)
-      const trackHeight = tracks[trackIndex].height
-      const mouseY = e.clientY - timelineRect.top
-      const newIndex = Math.min(
-        Math.max(0, Math.floor(mouseY / trackHeight)),
-        tracks.length - 1
-      )
-      
-      if (newIndex !== trackIndex) {
-        setTracks(prev => {
-          const newTracks = [...prev]
-          const [removed] = newTracks.splice(trackIndex, 1)
-          newTracks.splice(newIndex, 0, removed)
-          return newTracks
-        })
-      }
-      
-      setDraggedTrackPos({ x: e.clientX, y: e.clientY })
     }
   }
 
@@ -185,13 +190,11 @@ export function ImprovedAudioAnnotationSystem() {
     setDraggingAnnotation(null)
     setResizingAnnotation(null)
     setResizingTrack(null)
-    setDraggingTrack(null)
-    setDraggedTrackPos(null)
   }
 
   const handleAddTrack = () => {
     const newTrackId = `track-${tracks.length + 1}`
-    const newTrack = { id: newTrackId, name: `Track ${tracks.length + 1}`, height: 64 }
+    const newTrack = { id: newTrackId, name: `Track ${tracks.length + 1}`, height: MIN_TRACK_HEIGHT }
     setTracks(prev => [...prev, newTrack])
     setTrackData(prev => ({ ...prev, [newTrackId]: [] }))
   }
@@ -230,6 +233,28 @@ export function ImprovedAudioAnnotationSystem() {
     setEditingTrackId(null)
   }
 
+  const handleTrackNameChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setNewTrackName(e.target.value)
+  }
+
+  const confirmTrackNameEdit = (id: string) => {
+    handleTrackNameEdit(id, newTrackName)
+    setEditingTrackId(null)
+  }
+
+  const cancelTrackNameEdit = () => {
+    setEditingTrackId(null)
+    setNewTrackName('')
+  }
+
+  const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>, id: string) => {
+    if (e.key === 'Enter') {
+      handleTrackNameEdit(id, (e.target as HTMLInputElement).value)
+    } else if (e.key === 'Escape') {
+      setEditingTrackId(null)
+    }
+  }
+
   const handleDeleteTrack = (id: string) => {
     setTracks(prev => prev.filter(track => track.id !== id))
     setTrackData(prev => {
@@ -247,13 +272,100 @@ export function ImprovedAudioAnnotationSystem() {
     linkElement.setAttribute('href', dataUri)
     linkElement.setAttribute('download', exportFileDefaultName)
     linkElement.click()
+  };
+  const moveTrackUp = (index: number) => {
+    if (index > 0) {
+      setTracks(prev => {
+        const newTracks = [...prev];
+        [newTracks[index - 1], newTracks[index]] = [newTracks[index], newTracks[index - 1]];
+        return newTracks;
+      });
+    }
+  };
+
+  const moveTrackDown = (index: number) => {
+    if (index < tracks.length - 1) {
+      setTracks(prev => {
+        const newTracks = [...prev];
+        [newTracks[index + 1], newTracks[index]] = [newTracks[index], newTracks[index + 1]];
+        return newTracks;
+      });
+    }
+  };
+
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    if (file && file.type === 'audio/mpeg') {
+      const url = URL.createObjectURL(file)
+      setAudioSrc(url)
+      setTotalDuration(0) // Reset duration, it will be updated when audio is loaded
+    }
   }
+
+  const togglePlayPause = () => {
+    if (audioRef.current) {
+      if (isPlaying) {
+        audioRef.current.pause()
+      } else {
+        audioRef.current.play()
+      }
+      setIsPlaying(!isPlaying)
+    }
+  }
+
+  const handleTimeUpdate = () => {
+    if (audioRef.current) {
+      setTimelinePosition(audioRef.current.currentTime)
+    }
+  }
+
+  const handleLoadedMetadata = () => {
+    if (audioRef.current) {
+      setTotalDuration(audioRef.current.duration)
+    }
+  }
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.addEventListener('timeupdate', handleTimeUpdate)
+      audioRef.current.addEventListener('loadedmetadata', handleLoadedMetadata)
+    }
+    return () => {
+      if (audioRef.current) {
+        audioRef.current.removeEventListener('timeupdate', handleTimeUpdate)
+        audioRef.current.removeEventListener('loadedmetadata', handleLoadedMetadata)
+      }
+    }
+  }, [audioSrc])
 
   return (
     <div className="p-4 max-w-4xl mx-auto" ref={containerRef}>
       <div className="mb-4 p-4 border rounded-lg bg-gray-100">
-        <div className="h-32 bg-gray-300 rounded flex items-center justify-center">
-          Audio Player Placeholder
+        <div className="flex flex-col items-center space-y-4">
+          <Input type="file" accept=".mp3" onChange={handleFileUpload} />
+          {audioSrc && (
+            <div className="w-full">
+              <audio ref={audioRef} src={audioSrc} />
+              <div className="flex items-center justify-between">
+                <Button onClick={togglePlayPause}>
+                  {isPlaying ? <PauseIcon /> : <PlayIcon />}
+                </Button>
+                <Slider
+                  value={[timelinePosition]}
+                  onValueChange={([value]) => {
+                    setTimelinePosition(value)
+                    if (audioRef.current) {
+                      audioRef.current.currentTime = value
+                    }
+                  }}
+                  max={totalDuration}
+                  step={0.01}
+                  className="w-full mx-4"
+                />
+                <span>{formatTime(timelinePosition)} / {formatTime(totalDuration)}</span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -277,46 +389,62 @@ export function ImprovedAudioAnnotationSystem() {
               {tracks.map((track, index) => (
                 <div
                   key={track.id}
-                  className={`border-b relative ${draggingTrack === track.id ? 'z-10' : ''}`}
+                  className={`border-b relative`}
                   style={{
                     height: `${track.height}px`,
-                    transform: draggingTrack === track.id && draggedTrackPos
-                      ? `translate(${draggedTrackPos.x}px, ${draggedTrackPos.y}px)`
-                      : 'none',
-                    transition: draggingTrack === track.id ? 'none' : 'transform 0.3s ease-out',
                   }}
                 >
-                  <div className="h-full flex items-center justify-between bg-gray-200 p-1">
-                    <div
-                      className="cursor-move"
-                      onMouseDown={() => setDraggingTrack(track.id)}
-                    >
-                      <GripVerticalIcon className="h-4 w-4 text-gray-500" />
+                  <div className="h-full bg-gray-200 p-1 flex flex-col justify-between">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center">
+                        {editingTrackId === track.id ? (
+                          <Input
+                            value={newTrackName}
+                            onChange={handleTrackNameChange}
+                            onBlur={cancelTrackNameEdit}
+                            onKeyDown={(e) => handleKeyPress(e, track.id)}
+                            className="w-16 h-6 text-xs"
+                            autoFocus
+                          />
+                        ) : (
+                          <span
+                            className="font-bold text-sm cursor-pointer"
+                            onDoubleClick={() => {
+                              setEditingTrackId(track.id)
+                              setNewTrackName(track.name)
+                            }}
+                          >
+                            {track.name}
+                          </span>
+                        )}
+                      </div>
                     </div>
-                    {editingTrackId === track.id ? (
-                      <Input
-                        value={track.name}
-                        onChange={(e) => handleTrackNameEdit(track.id, e.target.value)}
-                        onBlur={() => setEditingTrackId(null)}
-                        onKeyPress={(e) => e.key === 'Enter' && handleTrackNameEdit(track.id, (e.target as HTMLInputElement).value)}
-                        className="w-16 h-6 text-xs"
-                      />
-                    ) : (
-                      <span
-                        className="font-bold text-sm cursor-pointer"
-                        onDoubleClick={() => setEditingTrackId(track.id)}
+                    <div className="flex justify-end space-x-1 mt-1">
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => moveTrackUp(index)}
+                        className="h-6 w-6 p-0"
                       >
-                        {track.name}
-                      </span>
-                    )}
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => handleDeleteTrack(track.id)}
-                      className="h-6 w-6 p-0"
-                    >
-                      <Trash2Icon className="h-4 w-4" />
-                    </Button>
+                        <ArrowUpIcon className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => moveTrackDown(index)}
+                        className="h-6 w-6 p-0"
+                      >
+                        <ArrowDownIcon className="h-4 w-4" />
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={() => handleDeleteTrack(track.id)}
+                        className="h-6 w-6 p-0"
+                      >
+                        <Trash2Icon className="h-4 w-4" />
+                      </Button>
+                    </div>
                   </div>
                 </div>
               ))}
@@ -324,7 +452,7 @@ export function ImprovedAudioAnnotationSystem() {
             <div className="overflow-x-auto flex-grow">
               <div 
                 ref={timelineRef}
-                className="relative border rounded-lg"
+                className="relative border rounded-lg overflow-hidden"
                 onMouseMove={handleMouseMove}
                 onMouseUp={handleMouseUp}
                 onMouseLeave={handleMouseUp}
@@ -336,11 +464,20 @@ export function ImprovedAudioAnnotationSystem() {
                 }}
               >
                 {tracks.map((track, trackIndex) => (
-                  <div key={track.id} className="absolute w-full border-b" style={{ top: `${tracks.slice(0, trackIndex).reduce((acc, t) => acc + t.height, 0)}px`, height: `${track.height}px` }}>
+                  <div 
+                    key={track.id} 
+                    className={`absolute w-full border-b`}
+                    style={{ 
+                      top: `${tracks.slice(0, trackIndex).reduce((acc, t) => acc + t.height, 0)}px`, 
+                      height: `${track.height}px`,
+                    }}
+                  >
+                    {/* Track content */}
                     {trackData[track.id]?.map((annotation, index) => (
                       <div
                         key={index}
-                        className="absolute top-0 h-full bg-blue-200 border border-blue-400 rounded cursor-move"
+                        className="annotation absolute top-0 h-full bg-blue-200 border border-blue-400 rounded cursor-move max-w-full overflow-hidden
+                        "
                         style={{ 
                           left: `${timeToPixels(annotation.start)}px`, 
                           width: `${timeToPixels(annotation.end - annotation.start)}px`,
@@ -462,4 +599,11 @@ export function ImprovedAudioAnnotationSystem() {
       </div>
     </div>
   )
+}
+
+// Helper function to format time in MM:SS
+function formatTime(seconds: number): string {
+  const minutes = Math.floor(seconds / 60)
+  const remainingSeconds = Math.floor(seconds % 60)
+  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}`
 }
